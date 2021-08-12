@@ -9,9 +9,10 @@ README = (HERE / "README.md").read_text()
 
 setup(
     name="imap-client",
-    version="0.1.0",
+    version="0.1.1",
     description="Simple client providing an object interface for imaplib",
     long_description=README,
+    long_description_content_type='text/markdown',
     packages=find_packages(),
     url="https://github.com/dawidl022/imap-client",
     author="dawidl022",
