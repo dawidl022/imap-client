@@ -8,14 +8,21 @@ def check_res(response):
         raise ValueError("Bad response from connection")
 
 
+def get_data(msg_ids: str, data_type: str,
+             conn: imaplib.IMAP4 | imaplib.IMAP4_SSL) -> bytes:
+    res, data = conn.fetch(msg_ids, data_type)
+    check_res(res)
+    data[:] = [item for item in data if item != b")"]
+    # print(data)
+    return data
+
+
 class Msg:
-    def __init__(self, id, inbox: Inbox):
+    def __init__(self, id, from_h, subject_h, inbox: Inbox):
         self.id = id
         self.conn = inbox.conn
         self.inbox = inbox
-        self.preview_headers = {header: self.get_header(header).strip()
-            for header in ["From", "Subject"]
-        }
+        self.preview_headers = {"From": from_h, "Subject": subject_h}
         self.raw_message = None
         self.message = None
         self.text_body = None
@@ -26,7 +33,7 @@ class Msg:
         self.conn.select(f'"{self.inbox.name}"')
         self.message = self.get_message()
         body_parts = self.get_body(self.message)
-        print(body_parts)
+        # print(body_parts)
         self.text_body = self.parse_parts(body_parts, "text/plain")
         self.text_html = self.parse_parts(body_parts, "text/html")
         self.attachments = self.parse_attachments(body_parts)
@@ -34,7 +41,7 @@ class Msg:
     def get_data(self, data_type) -> bytes:
         res, data = self.conn.fetch(str(self.id), data_type)
         check_res(res)
-        print(data)
+        # print(data)
         return data[0][1]
 
     def get_header(self, header) -> str:
@@ -75,7 +82,7 @@ class Msg:
                  message.get_payload(decode=True).decode())
 
     def parse_parts(self, body_parts, type):
-        print(body_parts)
+        # print(body_parts)
         if isinstance(body_parts, tuple):
             if body_parts[0] == type:
                 return body_parts[1]
@@ -132,18 +139,35 @@ class Inbox:
 
         for i in range(self.size, 0, -self.msg_display_amount):
 
+            start = i - self.msg_display_amount if i > self.msg_display_amount \
+                    else 1
+
+            from_headers = get_data(f"{start}:{i}", "BODY[HEADER.FIELDS (FROM)]",
+                    self.conn)
+
+            subject_headers = get_data(f"{start}:{i}", "BODY[HEADER.FIELDS (SUBJECT)]",
+                    self.conn)
+                
+            # print(from_headers)
+
             msgs = []
             end = i - self.msg_display_amount
             end = end if end > 0 else 0
+            k = -1
             for j in range(i, end, -1):
-                msgs.append(Msg(j, self))
+                msgs.append(Msg(j,
+                    from_headers[k][1].decode().replace("From" + ": ", ""),
+                    subject_headers[k][1].decode().replace("Subject" + ": ", ""),
+                    self)
+                )
+                k -= 1
 
             yield msgs
 
 
 class IMAPClient:
     def __init__(self, conn: imaplib.IMAP4 | imaplib.IMAP4_SSL,
-                 msg_display_amount: int = 10):
+                 msg_display_amount: int = 100):
         self.conn = conn
         self.msg_display_amount = msg_display_amount
         self.inbox_data = {
