@@ -14,6 +14,10 @@ class Msg:
         self.conn = inbox.conn
         self.inbox = inbox
         self.preview_headers = preview_headers
+
+        # TODO make below attributes properties, raising exception when accessed
+        # before running .fetch_data()
+        # raise AttributeError("Please run .fetch_data() first")
         self.raw_message = None
         self.message = None
         self.text_body = None
@@ -24,9 +28,14 @@ class Msg:
         self.conn.select(f'"{self.inbox.name}"')
         self.message = self.get_message()
         body_parts = self.get_body(self.message)
-        self.text_body = self.parse_parts(body_parts, "text/plain")
-        self.text_html = self.parse_parts(body_parts, "text/html")
-        self.attachments = self.parse_attachments(body_parts)
+
+        self.text_body = []
+        self.html_body = []
+        self.attachments = []
+        self.parse_parts(body_parts)
+        self.text_body = "\n".join(self.text_body) if self.text_body else None
+        self.html_body = "\n".join(self.html_body) if self.html_body else None
+
 
     def get_data(self, data_type) -> bytes:
         res, data = self.conn.fetch(str(self.id), data_type)
@@ -70,34 +79,22 @@ class Msg:
         return  (message.get_content_type(),
                  message.get_payload(decode=True).decode())
 
-    def parse_parts(self, body_parts, type):
+    def parse_parts(self, body_parts: list | tuple):
         if isinstance(body_parts, tuple):
-            if body_parts[0] == type:
-                return body_parts[1]
-            return None
-        
-        parsed_parts = []
-        for part in body_parts:
-            parsed_part = self.parse_parts(part, type)
-            if parsed_part is not None:
-                parsed_parts.append(parsed_part)
+            if body_parts[0] == "text/plain":
+                self.text_body.append(body_parts[1])
+            elif body_parts[0] == "text/html":
+                self.html_body.append(body_parts[1])
+            elif body_parts[0] == "attachment":
+                self.attachments = body_parts
+                
+        elif isinstance(body_parts, list):
+            for part in body_parts:
+                self.parse_parts(part)
 
-        return "\n".join(parsed_parts)
+        else:
+            raise TypeError("Invalid data type sent to parse")
 
-
-    def parse_attachments(self, body_parts):
-        if isinstance(body_parts, tuple):
-            if body_parts[0] == "attachment":
-                return [body_parts]
-            return None
-
-        parsed_attachments = []
-        for part in body_parts:
-            parsed_attachment = self.parse_attachments(part)
-            if parsed_attachment is not None:
-                parsed_attachments += parsed_attachment
-
-        return parsed_attachments
 
 class Inbox:
     def __init__(self, flags, delimiter, name, size, **settings):
@@ -174,6 +171,8 @@ class IMAPClient:
             "conn": conn, 
             "msg_display_amount": msg_display_amount,
             "auto_fetch_msgs": auto_fetch_msgs
+            # TODO add setting to chose preview headers fetched by Inbox
+            # "headers_in_preview": headers_in_preview
         }
         self.inboxes: list[Inbox] = self._get_inboxes()
     
