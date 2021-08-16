@@ -1,6 +1,7 @@
 from __future__ import annotations
 import imaplib
 import email, email.message
+import datetime
 
 
 def check_res(response):
@@ -23,6 +24,7 @@ class Msg:
         self.text_body = None
         self.html_body = None
         self.attachments = None
+        self.date = None
 
     def fetch_data(self):
         self.conn.select(f'"{self.inbox.name}"')
@@ -35,6 +37,17 @@ class Msg:
         self.parse_parts(body_parts)
         self.text_body = "\n".join(self.text_body) if self.text_body else None
         self.html_body = "\n".join(self.html_body) if self.html_body else None
+        # rcv_date = self.message["received"].split(";")[-1].strip()[:-6])
+        try:
+            self.date = datetime.datetime.strptime(
+                    self.message["date"],
+                    "%a, %d %b %Y %H:%M:%S %z"
+                ).astimezone(tz=None)
+        except ValueError:
+            self.date = datetime.datetime.strptime(
+                    self.message["date"],
+                    "%a, %d %b %Y %H:%M:%S %Z"
+                ).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
 
 
     def get_data(self, data_type) -> bytes:
