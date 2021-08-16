@@ -146,11 +146,15 @@ class Inbox:
     def get_data(self, msg_ids: str, data_type: str) -> list[bytes]:
         res, data = self.conn.fetch(msg_ids, data_type)
         check_res(res)
-        data[:] = [item for item in data if item != b")"]
         return data
 
     def get_bulk_headers(self, start: int, end: int, header: str):
-        return self.get_data(f"{start}:{end}", f"BODY[HEADER.FIELDS ({header})]")
+        headers = self.get_data(f"{start}:{end}", f"BODY[HEADER.FIELDS ({header})]")
+
+        if isinstance(headers[0], tuple):
+            headers = [header for header in headers if isinstance(header, tuple)]
+        
+        return headers
 
     @staticmethod
     def parse_headers(bulk_headers: dict, message_index: int) -> dict:
