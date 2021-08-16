@@ -1,7 +1,10 @@
 from __future__ import annotations
+from pathlib import Path
 import imaplib
 import email, email.message
 import datetime
+import os
+import pathlib
 
 
 def check_res(response):
@@ -15,6 +18,9 @@ class Msg:
         self.conn = inbox.conn
         self.inbox = inbox
         self.preview_headers = preview_headers
+        self.save_path: pathlib.Path = inbox.save_path \
+            / preview_headers["From"].strip() \
+            / preview_headers["Subject"].strip()
 
         # TODO make below attributes properties, raising exception when accessed
         # before running .fetch_data()
@@ -37,16 +43,14 @@ class Msg:
         self.parse_parts(body_parts)
         self.text_body = "\n".join(self.text_body) if self.text_body else None
         self.html_body = "\n".join(self.html_body) if self.html_body else None
-        # rcv_date = self.message["received"].split(";")[-1].strip()[:-6])
+        date = " ".join(self.message["date"].split()[:6])
         try:
             self.date = datetime.datetime.strptime(
-                    self.message["date"],
-                    "%a, %d %b %Y %H:%M:%S %z"
+                    date, "%a, %d %b %Y %H:%M:%S %z"
                 ).astimezone(tz=None)
         except ValueError:
             self.date = datetime.datetime.strptime(
-                    self.message["date"],
-                    "%a, %d %b %Y %H:%M:%S %Z"
+                    date, "%a, %d %b %Y %H:%M:%S %Z"
                 ).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
 
 
@@ -99,7 +103,7 @@ class Msg:
             elif body_parts[0] == "text/html":
                 self.html_body.append(body_parts[1])
             elif body_parts[0] == "attachment":
-                self.attachments = body_parts
+                self.attachments.append(body_parts)
                 
         elif isinstance(body_parts, list):
             for part in body_parts:
@@ -107,6 +111,16 @@ class Msg:
 
         else:
             raise TypeError("Invalid data type sent to parse")
+
+    def save_attachment(self, attachment_index: int):
+        file_path = self.save_path / self.attachments[attachment_index][2]
+
+        if not file_path.parent.is_dir():
+            file_path.parent.mkdir(parents=True)
+
+        file_path.write_bytes(self.attachments[attachment_index][3].get_payload(
+            decode=True
+        ))
 
 
 class Inbox:
@@ -117,6 +131,7 @@ class Inbox:
         self.size = size
         self.conn = settings.get("conn")
         self.msg_display_amount = settings.get("msg_display_amount")
+        self.save_path = settings.get("save_path")
         self.msg_generator = self._get_messages()
         self.messages = self.msg_generator.__next__() \
             if settings.get("auto_fetch_msgs") else []
@@ -181,13 +196,15 @@ class Inbox:
 
 class IMAPClient:
     def __init__(self, conn: imaplib.IMAP4 | imaplib.IMAP4_SSL,
-                 msg_display_amount: int = 100, auto_fetch_msgs: bool = True):
+                 msg_display_amount: int = 100, auto_fetch_msgs: bool = True,
+                 save_path: str | pathlib.Path = "attachments"):
         self.conn = conn
         self.msg_display_amount = msg_display_amount
         self.inbox_data = {
             "conn": conn, 
             "msg_display_amount": msg_display_amount,
-            "auto_fetch_msgs": auto_fetch_msgs
+            "auto_fetch_msgs": auto_fetch_msgs,
+            "save_path": Path(save_path).expanduser()
             # TODO add setting to chose preview headers fetched by Inbox
             # "headers_in_preview": headers_in_preview
         }
