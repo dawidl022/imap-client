@@ -210,11 +210,14 @@ class IMAPClient:
         }
         self.inboxes: list[Inbox] = self._get_inboxes()
     
-    def get_display_inboxes(self):
+    def get_display_inboxes(self, max_name_length: int = 40):
         display = []
 
         for inbox in self.inboxes:
-            display.append(inbox.name.ljust(40) + str(inbox.size).rjust(6))
+            display.append(
+                inbox.name.ljust(max_name_length)
+                + str(inbox.size).rjust(6)
+            )
 
         return display
 
