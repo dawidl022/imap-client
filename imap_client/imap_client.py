@@ -19,8 +19,8 @@ class Msg:
         self.inbox = inbox
         self.preview_headers = preview_headers
         self.save_path: pathlib.Path = inbox.save_path \
-            / preview_headers["From"].strip() \
-            / preview_headers["Subject"].strip()
+            / preview_headers["From"] \
+            / preview_headers["Subject"]
 
         # TODO make below attributes properties, raising exception when accessed
         # before running .fetch_data()
@@ -188,7 +188,7 @@ class Inbox:
     def parse_headers(bulk_headers: dict, message_index: int) -> dict:
         return {
             header: bulk_headers[header][message_index][1] \
-            .decode().replace(header + ": ", "")
+            .decode().replace(header + ": ", "").strip()
             for header in bulk_headers.keys()
         }
 
