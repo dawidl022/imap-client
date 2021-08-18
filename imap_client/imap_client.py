@@ -1,9 +1,8 @@
 from __future__ import annotations
 from pathlib import Path
 import imaplib
-import email, email.message
+import email, email.message, email.header
 import datetime
-import os
 import pathlib
 
 
@@ -53,6 +52,16 @@ class Msg:
                     date, "%a, %d %b %Y %H:%M:%S %Z"
                 ).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
 
+        # Decode utf-8 headers
+        for i, header in enumerate(self.message._headers):
+            header_name = header[0]
+            header_value = email.header.decode_header(header[1])[0][0]
+            try:
+                header_value = header_value.decode()
+            except AttributeError:
+                pass
+            
+            self.message._headers[i] = (header_name, header_value)
 
     def get_data(self, data_type) -> bytes:
         res, data = self.conn.fetch(str(self.id), data_type)
@@ -60,8 +69,16 @@ class Msg:
         return data[0][1]
 
     def get_header(self, header) -> str:
-        return self.get_data(f"BODY[HEADER.FIELDS ({header.upper()})]") \
-               .decode().replace(header + ": ", "")
+        header_data = self.get_data(f"BODY[HEADER.FIELDS ({header.upper()})]")
+        header_data =  email.header.decode_header(
+                header_data.decode().replace(header + ": ", "")
+            )[0][0]
+        try:
+            header_data = header_data.decode()
+        except AttributeError:
+            pass
+
+        return header_data
 
     def get_message(self) -> email.message.Message:
         contents = self.get_data("RFC822")
@@ -186,11 +203,21 @@ class Inbox:
 
     @staticmethod
     def parse_headers(bulk_headers: dict, message_index: int) -> dict:
-        return {
-            header: bulk_headers[header][message_index][1] \
-            .decode().replace(header + ": ", "").strip()
+        headers = {
+            header: email.header.decode_header(
+                bulk_headers[header][message_index][1] 
+                .decode().replace(header + ": ", "").strip()
+            )[0][0] \
             for header in bulk_headers.keys()
         }
+        # account for different return types of email.header.decode_header()
+        for key in headers.keys():
+            try:
+                headers[key] = headers[key].decode()
+            except AttributeError:
+                pass
+
+        return headers
 
 
 
