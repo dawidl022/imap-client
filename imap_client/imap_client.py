@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import re
 import imaplib
 import email, email.message, email.header
 import datetime
@@ -71,7 +72,7 @@ class Msg:
     def get_header(self, header) -> str:
         header_data = self.get_data(f"BODY[HEADER.FIELDS ({header.upper()})]")
         header_data =  email.header.decode_header(
-                header_data.decode().replace(header + ": ", "")
+                re.sub(header + ": ", "", header_data.decode(), flags=re.I)
             )[0][0]
         try:
             header_data = header_data.decode()
@@ -205,8 +206,8 @@ class Inbox:
     def parse_headers(bulk_headers: dict, message_index: int) -> dict:
         headers = {
             header: email.header.decode_header(
-                bulk_headers[header][message_index][1] 
-                .decode().replace(header + ": ", "").strip()
+                re.sub(header + ": ", "", bulk_headers[header][message_index][1] 
+                .decode(), flags=re.I).strip()
             )[0][0] \
             for header in bulk_headers.keys()
         }
