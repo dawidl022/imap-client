@@ -9,7 +9,7 @@ README = (HERE / "README.md").read_text()
 
 setup(
     name="imap-client",
-    version="0.1.6",
+    version="0.1.7",
     description="Simple client providing an object interface for imaplib",
     long_description=README,
     long_description_content_type='text/markdown',

@@ -12,6 +12,10 @@ def check_res(response):
         raise ValueError("Bad response from connection")
 
 
+def remove_newlines(string: str):
+    return re.sub("\r\n|\r|\n", "", string)
+
+
 class Msg:
     def __init__(self, id, preview_headers: dict, inbox: Inbox):
         self.id = id
@@ -62,7 +66,7 @@ class Msg:
             except AttributeError:
                 pass
             
-            self.message._headers[i] = (header_name, header_value)
+            self.message._headers[i] = (header_name, remove_newlines(header_value))
 
     def get_data(self, data_type) -> bytes:
         res, data = self.conn.fetch(str(self.id), data_type)
@@ -206,8 +210,9 @@ class Inbox:
     def parse_headers(bulk_headers: dict, message_index: int) -> dict:
         headers = {
             header: email.header.decode_header(
-                re.sub(header + ": ", "", bulk_headers[header][message_index][1] 
-                .decode(), flags=re.I).strip()
+                remove_newlines(
+                    re.sub(header + ": ", "", bulk_headers[header][message_index][1] 
+                    .decode(), flags=re.I).strip())
             )[0][0] \
             for header in bulk_headers.keys()
         }
