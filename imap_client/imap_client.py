@@ -18,7 +18,7 @@ def remove_newlines(string: str):
 
 class Msg:
     def __init__(self, id, preview_headers: dict, inbox: Inbox):
-        self.id = id
+        self.uid = id
         self.conn = inbox.conn
         self.inbox = inbox
         self.preview_headers = preview_headers
@@ -69,7 +69,7 @@ class Msg:
             self.message._headers[i] = (header_name, remove_newlines(header_value))
 
     def get_data(self, data_type) -> bytes:
-        res, data = self.conn.fetch(str(self.id), data_type)
+        res, data = self.conn.uid("FETCH", str(self.uid), data_type)
         check_res(res)
         return data[0][1]
 
@@ -143,6 +143,9 @@ class Msg:
         file_path.write_bytes(self.attachments[attachment_index][3].get_payload(
             decode=True
         ))
+    
+    def delete(self):
+        self.inbox.delete_message(self)
 
 
 class Inbox:
@@ -173,33 +176,37 @@ class Inbox:
         if self.size == 0:
             yield []
 
-        for i in range(self.size, 0, -self.msg_display_amount):
+        uids = self.conn.uid("SEARCH", "ALL")[1][0].decode().split()
 
-            start = i - self.msg_display_amount if i > self.msg_display_amount \
-                    else 1
+        for start in range(self.size, 0, -self.msg_display_amount):
 
-            bulk_headers = {header: self.get_bulk_headers(start, i, header)
+            end = start - self.msg_display_amount
+            end = end if end > 0 else 0
+
+            fetch_amount = start - end
+
+            to_fetch = [uids.pop() for _ in range(fetch_amount)]
+
+            bulk_headers = {header: self.get_bulk_headers(to_fetch, header)
                     for header in ["From", "Subject"]}
                 
             msgs = []
-            end = i - self.msg_display_amount
-            end = end if end > 0 else 0
             index_in_bulk = -1
-            for j in range(i, end, -1):
+            for j in range(fetch_amount):
                 msgs.append(
-                    Msg(j, self.parse_headers(bulk_headers, index_in_bulk), self)
+                    Msg(to_fetch[j], self.parse_headers(bulk_headers, index_in_bulk), self)
                 )
                 index_in_bulk -= 1
 
             yield msgs
 
     def get_data(self, msg_ids: str, data_type: str) -> list[bytes]:
-        res, data = self.conn.fetch(msg_ids, data_type)
+        res, data = self.conn.uid("FETCH", msg_ids, data_type)
         check_res(res)
         return data
 
-    def get_bulk_headers(self, start: int, end: int, header: str):
-        headers = self.get_data(f"{start}:{end}", f"BODY[HEADER.FIELDS ({header})]")
+    def get_bulk_headers(self, to_fetch: list[str], header: str) -> list:
+        headers = self.get_data(f"{','.join(to_fetch)}", f"BODY[HEADER.FIELDS ({header})]")
 
         if isinstance(headers[0], tuple):
             headers = [header for header in headers if isinstance(header, tuple)]
@@ -225,6 +232,11 @@ class Inbox:
 
         return headers
 
+    def delete_message(self, message):
+        uid = message.uid
+        self.conn.uid("STORE", uid, "+FLAGS", "\\Deleted")
+        self.conn.expunge()
+        self.messages.remove(message)
 
 
 class IMAPClient:
