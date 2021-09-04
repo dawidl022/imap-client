@@ -16,6 +16,14 @@ def remove_newlines(string: str):
     return re.sub("\r\n|\r|\n", "", string)
 
 
+def parse_list(response_data: list[bytes]) -> list:
+    return response_data[0].decode().split()
+
+
+def parse_list_response(response):
+    return parse_list(response[1])
+
+
 class Msg:
     def __init__(self, id, preview_headers: dict, inbox: Inbox):
         self.uid = id
@@ -37,7 +45,7 @@ class Msg:
         self.date = None
 
     def fetch_data(self):
-        self.conn.select(f'"{self.inbox.name}"')
+        self.inbox.select()
         self.message = self.get_message()
         body_parts = self.get_body(self.message)
 
@@ -147,22 +155,45 @@ class Msg:
     def delete(self):
         self.inbox.delete_message(self)
 
+    def move_to(self, inbox_index: int) -> bool:
+        return self.inbox.client.move_message(self, self.inbox, inbox_index)
 
 class Inbox:
-    def __init__(self, flags, delimiter, name, size, **settings):
+    def __init__(self, flags, delimiter, name, client: IMAPClient, **settings):
         self.flags = flags
         self.delimiter = delimiter
         self.name = name
-        self.size = size
         self.conn = settings.get("conn")
+        self.size = None
+        self.update_size()
+        self.client = client
         self.msg_display_amount = settings.get("msg_display_amount")
         self.save_path = settings.get("save_path")
         self.msg_generator = self._get_messages()
         self.messages = self.msg_generator.__next__() \
             if settings.get("auto_fetch_msgs") else []
 
+    def select(self):
+        return self.conn.select(f'"{self.name}"')
+
+    def select_state(function):
+        def wrapper(self, *args, **kwargs):
+            self.select()
+            return function(self, *args, **kwargs)
+        return wrapper
+
+    def update_size(self):
+        res, size = self.select()
+        check_res(res)
+        size = int(size[0].decode())
+        self.size = size
+
+    @select_state
+    def next_uid(self):
+        return self.conn.untagged_responses.get("UIDNEXT", None)
+
+    @select_state
     def get_messages(self):
-        self.conn.select(f'"{self.name}"')
         try:
             new_messages = self.msg_generator.__next__()
         except StopIteration:
@@ -170,13 +201,13 @@ class Inbox:
         else:
             self.messages += new_messages
 
+    @select_state
     def _get_messages(self) -> list[Msg]:
-        self.conn.select(f'"{self.name}"')
 
         if self.size == 0:
             yield []
 
-        uids = self.conn.uid("SEARCH", "ALL")[1][0].decode().split()
+        uids = parse_list_response(self.conn.uid("SEARCH", "ALL"))
 
         for start in range(self.size, 0, -self.msg_display_amount):
 
@@ -187,7 +218,7 @@ class Inbox:
 
             to_fetch = [uids.pop() for _ in range(fetch_amount)]
 
-            bulk_headers = {header: self.get_bulk_headers(to_fetch, header)
+            bulk_headers = {header: self._get_bulk_headers(to_fetch, header)
                     for header in ["From", "Subject"]}
                 
             msgs = []
@@ -200,18 +231,23 @@ class Inbox:
 
             yield msgs
 
-    def get_data(self, msg_ids: str, data_type: str) -> list[bytes]:
+
+    def _get_data(self, msg_ids: str, data_type: str) -> list[bytes]:
         res, data = self.conn.uid("FETCH", msg_ids, data_type)
         check_res(res)
         return data
 
-    def get_bulk_headers(self, to_fetch: list[str], header: str) -> list:
-        headers = self.get_data(f"{','.join(to_fetch)}", f"BODY[HEADER.FIELDS ({header})]")
+    get_data = select_state(_get_data)
+
+    def _get_bulk_headers(self, to_fetch: list[str], header: str) -> list:
+        headers = self._get_data(f"{','.join(to_fetch)}", f"BODY[HEADER.FIELDS ({header})]")
 
         if isinstance(headers[0], tuple):
             headers = [header for header in headers if isinstance(header, tuple)]
         
         return headers
+
+    get_bulk_headers = select_state(_get_bulk_headers)
 
     @staticmethod
     def parse_headers(bulk_headers: dict, message_index: int) -> dict:
@@ -232,11 +268,13 @@ class Inbox:
 
         return headers
 
+    @select_state
     def delete_message(self, message):
         uid = message.uid
         self.conn.uid("STORE", uid, "+FLAGS", "\\Deleted")
         self.conn.expunge()
         self.messages.remove(message)
+        self.update_size()
 
 
 class IMAPClient:
@@ -281,10 +319,7 @@ class IMAPClient:
             if "Noselect" in flags:
                 continue
 
-            res, size = self.conn.select(f'"{name}"')
-            check_res(res)
-            size = int(size[0].decode())
-            parsed_inboxes.append(Inbox(flags, delimiter, name, size,
+            parsed_inboxes.append(Inbox(flags, delimiter, name, self,
                                         **self.inbox_data))
 
         # make "inbox" appear on top
@@ -293,3 +328,37 @@ class IMAPClient:
         )
 
         return parsed_inboxes
+
+    def move_message(self, message: Msg, source_inbox: Inbox,
+                     target_inbox_index: int) -> bool:
+        """Returns False and skips IMAP operation if the target inbox is at the
+        same time the source inbox, otherwise does a MOVE or COPY command and
+        returns True"""
+
+        target_inbox = self.inboxes[target_inbox_index]
+        if target_inbox is source_inbox:
+            return False
+        
+        capabilities = parse_list_response(self.conn.capability())
+        new_uid = target_inbox.next_uid()
+        message.inbox.select()
+
+        if "MOVE" in capabilities:
+            self.conn.uid("MOVE", message.uid, target_inbox.name)
+            message.inbox.messages.remove(message)
+        else:
+            self.conn.uid("COPY", message.uid, target_inbox.name)
+            message.delete()
+
+        copyuid_response = self.conn.untagged_responses.get("COPYUID", None)
+        if copyuid_response:
+            new_uid = parse_list(copyuid_response)[-1]
+
+        target_inbox.update_size()
+        source_inbox.update_size()
+
+        message.uid = new_uid
+        message.inbox = target_inbox
+        target_inbox.messages.append(message)
+
+        return True
