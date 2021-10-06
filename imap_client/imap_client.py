@@ -6,6 +6,8 @@ import email, email.message, email.header
 import datetime
 import pathlib
 
+# TODO document each function, method and class, as well as the whole module
+
 
 def check_res(response):
     if response != "OK":
@@ -158,39 +160,26 @@ class Msg:
     def move_to(self, inbox_index: int) -> bool:
         return self.inbox.client.move_message(self, self.inbox, inbox_index)
 
-class Inbox:
-    def __init__(self, flags, delimiter, name, client: IMAPClient, **settings):
-        self.flags = flags
-        self.delimiter = delimiter
+
+class MessageList:
+    def __init__(self, name, search_key, query_string, **settings):
         self.name = name
-        self.conn = settings.get("conn")
         self.size = None
-        self.update_size()
-        self.client = client
+        self.conn = settings.get("conn")
+        self.msg_generator = self._get_messages(search_key, query_string)
         self.msg_display_amount = settings.get("msg_display_amount")
         self.save_path = settings.get("save_path")
-        self.msg_generator = self._get_messages()
         self.messages = self.msg_generator.__next__() \
             if settings.get("auto_fetch_msgs") else []
 
-    def select(self):
-        return self.conn.select(f'"{self.name}"')
+    def select(self, name):
+        self.conn.select(name)
 
     def select_state(function):
         def wrapper(self, *args, **kwargs):
-            self.select()
+            self.select(*args, **kwargs)
             return function(self, *args, **kwargs)
         return wrapper
-
-    def update_size(self):
-        res, size = self.select()
-        check_res(res)
-        size = int(size[0].decode())
-        self.size = size
-
-    @select_state
-    def next_uid(self):
-        return self.conn.untagged_responses.get("UIDNEXT", None)
 
     @select_state
     def get_messages(self):
@@ -202,12 +191,14 @@ class Inbox:
             self.messages += new_messages
 
     @select_state
-    def _get_messages(self) -> list[Msg]:
+    def _get_messages(self, search_key, query_string=None) -> list[Msg]:
 
         if self.size == 0:
             yield []
 
-        uids = parse_list_response(self.conn.uid("SEARCH", "ALL"))
+        uids = parse_list_response(
+            self.conn.uid(search_key, f"{query_string if query_string else ''}")
+        )
 
         for start in range(self.size, 0, -self.msg_display_amount):
 
@@ -230,6 +221,29 @@ class Inbox:
                 index_in_bulk -= 1
 
             yield msgs
+
+
+
+class Inbox(MessageList):
+    def __init__(self, flags, delimiter, name, client: IMAPClient, **settings):
+        super().__init__(name, "ALL", None, **settings)
+        self.flags = flags
+        self.delimiter = delimiter
+        self.update_size()
+        self.client = client
+
+    def update_size(self):
+        res, size = self.select()
+        check_res(res)
+        size = int(size[0].decode())
+        self.size = size
+
+    def select(self):
+        return self.conn.select(f'"{self.name}"')
+
+    @select_state
+    def next_uid(self):
+        return self.conn.untagged_responses.get("UIDNEXT", None)
 
 
     def _get_data(self, msg_ids: str, data_type: str) -> list[bytes]:
@@ -275,6 +289,14 @@ class Inbox:
         self.conn.expunge()
         self.messages.remove(message)
         self.update_size()
+
+
+class SearchResults(MessageList):
+    def __init__(self, name: str, search_key: str, query_string: str,
+                 search_in: list[Inbox], **settings):
+        super().__init__(name, search_key, query_string, **settings)
+
+    def 
 
 
 class IMAPClient:
@@ -362,3 +384,8 @@ class IMAPClient:
         target_inbox.messages.append(message)
 
         return True
+
+    def search(self, key, query_string, inbox_indexes):
+        res, data = self.conn.search(None, key, f'"{query_string}"')
+        check_res(res)
+        return data
